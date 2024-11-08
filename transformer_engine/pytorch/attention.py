@@ -19,6 +19,7 @@ import numpy as np
 from packaging.version import Version as PkgVersion
 
 import torch
+import torch.distributed
 import torch.nn.functional as F
 
 import transformer_engine_torch as tex
@@ -1583,6 +1584,7 @@ def flash_attn_a2a_communicate(
     before_attn: bool,
 ) -> Union[torch.Tensor, List[torch.Tensor]]:
     """A2A communication for context parallelism."""
+    print(f'{torch.distributed.get_rank()} enter flash_attn_a2a_communicate cp_group: {torch.distributed.get_process_group_ranks(cp_group)}')
     a2a_inputs = [a2a_inputs] if not isinstance(a2a_inputs, list) else a2a_inputs
     a2a_outputs, a2a_reqs = [None] * len(a2a_inputs), [None] * len(a2a_inputs)
     if before_attn:
