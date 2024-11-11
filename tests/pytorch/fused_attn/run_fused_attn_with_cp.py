@@ -70,6 +70,7 @@ def run_dpa_with_cp(
             sub_group = dist.new_group(sub_ranks, backend="nccl")
             if rank in sub_ranks:
                 cp_comm_sub_groups.append(sub_group)
+        print(cp_comm_sub_ranks)
 
     if dtype == "fp8":
         fp8_recipe = DelayedScaling(fp8_dpa=True)
