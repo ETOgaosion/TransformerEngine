@@ -54,7 +54,7 @@ def run_dpa_with_cp(
     print(f"[INFO] world_size:{world_size}, rank:{rank}")
 
     dist.init_process_group(backend="nccl", world_size=world_size, rank=rank)
-
+    os.environ['NCCL_DEBUG_FILE'] = f'/workspace/Hetaceso/runtime/tests/unit_tests/flexpipe/unified_cp/nccl/rank_{rank}.log'
     # create flash attn comm group for CP
     cp_comm_ranks = range(world_size)
     assert rank in cp_comm_ranks

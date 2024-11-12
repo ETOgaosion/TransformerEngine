@@ -1573,6 +1573,29 @@ def reorder_seq_chunks_for_a2a(x, chunk_ids_for_a2a, seq_dim, cp_size, before_at
         x = x.view(cp_size, 2, *x.shape[1:])
     return x
 
+def debug_print_info(info, new=False):
+    if new:
+        with open(f"/workspace/Hetaceso/runtime/tests/unit_tests/flexpipe/unified_cp/logs/cp_{torch.distributed.get_rank()}.log", "w") as f:
+            f.write(f"{info}\n")
+    else:
+        with open(f"/workspace/Hetaceso/runtime/tests/unit_tests/flexpipe/unified_cp/logs/cp_{torch.distributed.get_rank()}.log", "a+") as f:
+            f.write(f"{info}\n")
+
+def test_ulysses(
+    cp_group: dist_group_type = None,
+):
+    rank = torch.distributed.get_rank()
+    if cp_group is None:
+        if rank % 2 == 0:
+            cp_group = torch.distributed.new_group(ranks=[rank, rank + 1], use_local_synchronization=True)
+        else:
+            cp_group = torch.distributed.new_group(ranks=[rank - 1, rank], use_local_synchronization=True)
+    print(f"{torch.distributed.get_rank()} cp_group: {torch.distributed.get_process_group_ranks(cp_group)}")
+    send_tensor = torch.rand([2, 4, 128, 8, 64], device=f"cuda:{torch.distributed.get_rank()}", dtype=torch.bfloat16)
+    recv_tensor = torch.empty([2, 4, 128, 8, 64], device=f"cuda:{torch.distributed.get_rank()}", dtype=torch.bfloat16)
+    for i in range(2):
+        torch.distributed.all_to_all_single(recv_tensor, send_tensor, group=cp_group)
+        print(f"{torch.distributed.get_rank()} recv_tensor: {recv_tensor.size()}")
 
 def flash_attn_a2a_communicate(
     a2a_inputs: Union[torch.Tensor, List[torch.Tensor]],
@@ -1586,6 +1609,12 @@ def flash_attn_a2a_communicate(
     """A2A communication for context parallelism."""
     a2a_inputs = [a2a_inputs] if not isinstance(a2a_inputs, list) else a2a_inputs
     a2a_outputs, a2a_reqs = [None] * len(a2a_inputs), [None] * len(a2a_inputs)
+    debug_print_info(f"before all to all. before_attn: {before_attn}")
+    # print(f'rank {torch.distributed.get_rank()}, cp_group: {torch.distributed.get_process_group_ranks(cp_group)}, len(a2a_inputs): {len(a2a_inputs)}, a2a_inputs.shape: {a2a_inputs[0].shape}')
+    cp_ranks = torch.distributed.get_process_group_ranks(cp_group)
+    debug_print_info(f"cp_group: {cp_ranks}, len(a2a_inputs): {len(a2a_inputs)}")
+    for key in a2a_inputs:
+        debug_print_info(f"a2a input size: {key.size()}")
     if before_attn:
         for i in range(len(a2a_inputs) + 2):
             if 0 < i < len(a2a_inputs) + 1:
