@@ -383,8 +383,6 @@ class _Linear(torch.autograd.Function):
                 weight_fp8,
                 main_grad,
             ) = ctx.saved_tensors
-            print(f'saved_tensors inputmat.shape: {inputmat.shape} {inputmat.dtype}')
-            
 
             # Gather intermediate/activation tensors if needed
             # NOTE: weight_fp8 = weight when ctx.fp8 == False and torch.disttributed.FSDP already
@@ -396,7 +394,6 @@ class _Linear(torch.autograd.Function):
                 inputmat_t,
                 weight_fp8 if ctx.fp8 and not isinstance(weight, Float8Tensor) else None,
             )
-            print(f'_fsdp_gather_tensors inputmat.shape: {inputmat.shape} {inputmat.dtype}')
 
             if ctx.cpu_offloading and ctx.fuse_wgrad_accumulation:
                 weight = torch.nn.Parameter(weight, weight.requires_grad)
@@ -435,7 +432,6 @@ class _Linear(torch.autograd.Function):
             else:
                 inputmat_total = inputmat
                 inputmat_t_total = inputmat_t
-            print(f'inputmat_total.shape: {inputmat_total.shape} {inputmat_total.dtype}')
 
             if ctx.is_first_microbatch is not None:
                 accumulate_wgrad_into_param_main_grad = (
@@ -566,7 +562,6 @@ class _Linear(torch.autograd.Function):
                         )
                 else:
                     # WGRAD
-                    print(f'inputmat_total.shape: {inputmat_total.shape} {inputmat_total.dtype}')
                     wgrad, grad_bias, _ = gemm(
                         inputmat_total,
                         grad_output,
