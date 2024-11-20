@@ -7661,7 +7661,7 @@ class DotProductAttention(TransformerEngineBaseModule):
         max_seqlen_kv: Optional[int] = None,
         attn_mask_type: Optional[str] = None,
         window_size: Optional[Tuple[int, int]] = None,
-        checkpoint_core_attention: bool = False,
+        checkpoint_core_attention: bool = True,
         core_attention_bias_type: str = "no_bias",
         core_attention_bias: Optional[torch.Tensor] = None,
         alibi_slopes: Optional[torch.Tensor] = None,
