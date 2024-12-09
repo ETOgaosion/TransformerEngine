@@ -25,6 +25,7 @@ import torch.nn.functional as F
 import transformer_engine_torch as tex
 import transformer_engine as te
 from transformer_engine.pytorch.utils import get_cudnn_version
+from transformer_engine.pytorch.timers import Timer, Timers, get_timers
 from transformer_engine.pytorch.cpp_extensions import (
     cast_to_fp8,
     cast_from_fp8,
@@ -1607,6 +1608,9 @@ def flash_attn_a2a_communicate(
     before_attn: bool,
 ) -> Union[torch.Tensor, List[torch.Tensor]]:
     """A2A communication for context parallelism."""
+    timers = get_timers()
+    if timers:
+        timers("TEA2A", log_level=2).start()
     a2a_inputs = [a2a_inputs] if not isinstance(a2a_inputs, list) else a2a_inputs
     a2a_outputs, a2a_reqs = [None] * len(a2a_inputs), [None] * len(a2a_inputs)
     debug_print_info(f"before all to all. before_attn: {before_attn}")
@@ -1668,6 +1672,8 @@ def flash_attn_a2a_communicate(
                     # or [2, s//2, b, cp, np//cp, hn] -> [s*b, np, hn]
                     a2a_outputs[i - 2] = x.view(-1, x.shape[-3] * x.shape[-2], x.shape[-1])
     torch.cuda.current_stream().wait_stream(cp_stream)
+    if timers:
+        timers("TEA2A").stop()
     return a2a_outputs[0] if len(a2a_inputs) == 1 else a2a_outputs
 
 
@@ -1711,6 +1717,9 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         cp_stream,
     ):
         # pylint: disable=missing-function-docstring
+        timers = get_timers()
+        if timers:
+            timers("TEAttnFwd", log_level=2).start()
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
 
@@ -1895,8 +1904,12 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
             if i < cp_size:
                 with torch.cuda.stream(flash_attn_streams[i % 2]):
                     # wait until KV is received
+                    if timers:
+                        timers("RingAttnFwdWait", log_level=2).start()
                     for req in send_recv_reqs[(i + 1) % 2]:
                         req.wait()
+                    if timers:
+                        timers("RingAttnFwdWait").stop()
 
                     if i < (cp_size - 1):
                         p2p_comm_buffers[i + 1] = torch.empty_like(p2p_comm_buffers[i])
@@ -1929,6 +1942,8 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                         fp8_meta_kwargs["amax_s_offset"] = i
                         fp8_meta_kwargs["amax_o"] = amax_per_step
                         fp8_meta_kwargs["amax_o_offset"] = cp_size + i
+                    if timers:
+                        timers("TEFlashAttnFwd", log_level=2).start()
                     if causal:
                         if i == 0:
                             if pad_between_seqs_q:
@@ -2326,6 +2341,8 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                             softmax_lse_per_step[i] = fa_outputs[5]
                             if not _use_flash_attn_3:
                                 rng_states[i] = fa_outputs[7]
+                    if timers:
+                        timers("TEFlashAttnFwd").stop()
 
             if i > 0:
                 # wait until fwd restuls correction of last step is done
@@ -2543,10 +2560,16 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         ctx.use_fused_attention = use_fused_attention
         ctx.fp8 = fp8 and int(os.getenv("NVTE_FP8_DPA_BWD", "1"))
         ctx.fp8_meta = fp8_meta
+        
+        if timers:
+            timers("TEAttnFwd").stop()
         return out_ret
 
     @staticmethod
     def backward(ctx, dout):
+        timers = get_timers()
+        if timers:
+            timers("TEAttnBwd", log_level=2).start()
         # pylint: disable=missing-function-docstring
         cp_size_a2a = ctx.cp_size_a2a
         rank_a2a = ctx.rank_a2a
@@ -2713,8 +2736,12 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
 
         for i in range(cp_size):
             # wait until KV is received
+            if timers:
+                timers("RingAttnBwdWait", log_level=2).start()
             for req in send_recv_reqs:
                 req.wait()
+            if timers:
+                timers("RingAttnBwdWait").stop()
 
             send_tensor = p2p_comm_buffers[i % 2]
             recv_tensor = p2p_comm_buffers[(i + 1) % 2]
@@ -2753,6 +2780,9 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
             if ctx.fp8 and ctx.use_fused_attention:
                 fp8_meta_kwargs["amax_dp"] = amax_per_step[0][i]
                 fp8_meta_kwargs["amax_dqkv"] = amax_per_step[0][i]
+            
+            if timers:
+                timers("TEFlashAttnBwd", log_level=2).start()
             # In reversed order of fwd
             if causal:
                 if i == (cp_size - 1):
@@ -3095,6 +3125,8 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                         causal=False,
                         **fa_backward_kwargs,
                     )
+            if timers:
+                timers("TEFlashAttnBwd").stop()
 
             if ctx.fp8:
                 dq = dq_fp8[(rank + i + 1) % cp_size]
@@ -3329,6 +3361,9 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         if attn_dbias is not None:
             # [b, np, sq, 2*cp, sk//(2*cp)] -> [b, np, sq, sk]
             attn_dbias = attn_dbias.view(*attn_dbias.shape[:-2], -1)
+
+        if timers:
+            timers("TEAttnBwd").stop()
 
         return (
             None,
@@ -5413,6 +5448,10 @@ class FlashAttention(torch.nn.Module):
                     window_size=window_size,
                 )
         else:
+            
+            timers = get_timers()
+            if timers:
+                timers("TEFlashAttnFwd").start()
 
             from .cpu_offload import CPUOffloadEnabled
 
@@ -5528,6 +5567,9 @@ class FlashAttention(torch.nn.Module):
                         causal="causal" in attn_mask_type,
                         **fa_optional_forward_kwargs,
                     )
+                
+                if timers:
+                    timers("TEFlashAttnFwd").stop()
 
         if qkv_format in ["sbhd", "bshd"] and "padding" in attn_mask_type:
             output = UnpackTensor.apply(indices_q, batch_size * max_seqlen_q, output)

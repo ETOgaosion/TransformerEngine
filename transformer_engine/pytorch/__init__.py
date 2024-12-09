@@ -82,6 +82,7 @@ from transformer_engine.pytorch.export import onnx_export
 from transformer_engine.pytorch.distributed import checkpoint
 from transformer_engine.pytorch.distributed import CudaRNGStatesTracker
 from transformer_engine.pytorch.cpu_offload import get_cpu_offload_context
+from transformer_engine.pytorch.timers import Timer, Timers, set_timers, get_timers
 from transformer_engine.pytorch import optimizers
 
 # Register custom op symbolic ONNX functions
