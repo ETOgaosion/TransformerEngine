@@ -5287,6 +5287,9 @@ class FlashAttention(torch.nn.Module):
         fp8_meta: Optional[Dict[str, Any]] = None,
     ) -> torch.Tensor:
         """flash-attn fprop"""
+        timers = get_timers()
+        if timers:
+            timers("FlashAttentionClassFwd", log_level=2).start()
 
         assert all(
             x.dtype in [torch.float16, torch.bfloat16] or isinstance(x, Float8Tensor)
@@ -5443,7 +5446,7 @@ class FlashAttention(torch.nn.Module):
             
             timers = get_timers(True)
             if timers:
-                timers("TEFlashAttnFwd").start()
+                timers("TEFlashAttnFwd", log_level=2).start()
 
             from .cpu_offload import CPUOffloadEnabled
 
@@ -5583,7 +5586,9 @@ class FlashAttention(torch.nn.Module):
         elif qkv_format == "thd":
             # thd -> t(hd)
             output = output.reshape(output.shape[0], -1)
-
+        
+        if timers:
+            timers("FlashAttentionClassFwd").stop()
         return output.contiguous()
 
 
@@ -7695,7 +7700,7 @@ class DotProductAttention(TransformerEngineBaseModule):
         max_seqlen_kv: Optional[int] = None,
         attn_mask_type: Optional[str] = None,
         window_size: Optional[Tuple[int, int]] = None,
-        checkpoint_core_attention: bool = True,
+        checkpoint_core_attention: bool = False,
         core_attention_bias_type: str = "no_bias",
         core_attention_bias: Optional[torch.Tensor] = None,
         alibi_slopes: Optional[torch.Tensor] = None,
