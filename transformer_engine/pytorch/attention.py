@@ -1887,6 +1887,9 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
 
         softmax_lse_ = None
         out = None
+        timers = get_timers(True)
+        if timers:
+            timers("TERingAttnCoreLoopFwd", log_level=2).start()
         for i in range(cp_size + 1):
             if i < cp_size:
                 with torch.cuda.stream(flash_attn_streams[i % 2]):
@@ -2384,6 +2387,8 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                     flash_attn_streams[(i - 1) % 2].record_event(fwd_results_correction_done)
 
         torch.cuda.current_stream().wait_stream(flash_attn_streams[1])
+        if timers:
+            timers("TERingAttnCoreLoopFwd").stop()
 
         softmax_lse = softmax_lse.to(torch.float)
         for i in range(cp_size):
