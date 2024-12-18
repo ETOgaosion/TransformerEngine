@@ -1889,9 +1889,11 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         out = None
         timers = get_timers(True)
         if timers:
-            timers("TERingAttnCoreLoopFwd", log_level=2).start()
+            timers("TERingAttnCoreLoopInnerCalcFwd", log_level=2).start()
         for i in range(cp_size + 1):
             if i < cp_size:
+                if timers:
+                    timers("TERingAttnCoreLoopFwd", log_level=2).start()
                 with torch.cuda.stream(flash_attn_streams[i % 2]):
                     # wait until KV is received
                     if timers:
@@ -2333,7 +2335,8 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                                 rng_states[i] = fa_outputs[7]
                     if timers:
                         timers("TEFlashAttnFwd").stop()
-
+                if timers:
+                    timers("TERingAttnCoreLoopInnerCalcFwd").stop()
             if i > 0:
                 # wait until fwd restuls correction of last step is done
                 if i > 1:
