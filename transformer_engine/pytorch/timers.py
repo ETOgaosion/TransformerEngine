@@ -60,7 +60,7 @@ class Timer(TimerBase):
     in torch distributed land, it will result in the global communicator.
     """
 
-    def __init__(self, name):
+    def __init__(self, name, log_level, global_log_level):
         """Initialize Timer.
 
         Args:
@@ -74,6 +74,8 @@ class Timer(TimerBase):
         self._barrier_group = None
         self._start_time = time.time()
         self._logged_times = 0
+        self._log_level = log_level
+        self._global_log_level = global_log_level
 
     def set_barrier_group(self, barrier_group):
         """Sets barrier group.
@@ -89,6 +91,8 @@ class Timer(TimerBase):
         Args:
             barrier (bool, optional): Synchronizes ranks before starting. Defaults to False.
         """
+        if self._log_level > self._global_log_level:
+            return
         assert not self._started, 'timer has already been started'
         if barrier:
             torch.distributed.barrier(group=self._barrier_group)
@@ -102,6 +106,8 @@ class Timer(TimerBase):
         Args:
             barrier (bool, optional): Synchronizes ranks before stopping. Defaults to False.
         """
+        if self._log_level > self._global_log_level:
+            return
         assert self._started, 'timer is not started'
         if barrier:
             torch.distributed.barrier(group=self._barrier_group)
@@ -197,7 +203,7 @@ class Timers:
         # if log_level > self._log_level:
         #     return self._dummy_timer
         # Otherwise, initalize the timer and set the level.
-        self._timers[name] = Timer(name)
+        self._timers[name] = Timer(name, log_level, self._log_level)
         self._log_levels[name] = log_level
         return self._timers[name]
 
@@ -405,7 +411,7 @@ class Timers:
                 writer.add_scalar(name + '-time', max_time, iteration)
 
 _GLOBAL_TIMERS = None
-TE_USE_TIMER = os.environ.get('TE_USE_TIMER', '1') == '1'
+TIMERS_LOG_LEVEL = int(os.environ.get('TIMERS_LOG_LEVEL', '1'))
 
 def _ensure_var_is_not_initialized(var, name):
     """Make sure the input variable is not None."""
@@ -419,11 +425,9 @@ def set_timers():
     """Initialize timers."""
     global _GLOBAL_TIMERS
     _ensure_var_is_not_initialized(_GLOBAL_TIMERS, 'timers')
-    _GLOBAL_TIMERS = Timers(0, "all")
+    _GLOBAL_TIMERS = Timers(TIMERS_LOG_LEVEL, "all")
 
-def get_timers(is_te=False):
+def get_timers():
     """Return timers."""
-    if is_te and not TE_USE_TIMER:
-        return None
     _ensure_var_is_initialized(_GLOBAL_TIMERS, 'timers')
     return _GLOBAL_TIMERS

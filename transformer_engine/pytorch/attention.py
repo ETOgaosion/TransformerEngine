@@ -1600,7 +1600,7 @@ def flash_attn_a2a_communicate(
     before_attn: bool,
 ) -> Union[torch.Tensor, List[torch.Tensor]]:
     """A2A communication for context parallelism."""
-    timers = get_timers(True)
+    timers = get_timers()
     if timers:
         timers("TEA2A", log_level=2).start()
     a2a_inputs = [a2a_inputs] if not isinstance(a2a_inputs, list) else a2a_inputs
@@ -1704,7 +1704,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         cp_stream,
     ):
         # pylint: disable=missing-function-docstring
-        timers = get_timers(True)
+        timers = get_timers()
         if timers:
             timers("TEAttnFwd", log_level=2).start()
         if softmax_scale is None:
@@ -1887,7 +1887,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
 
         softmax_lse_ = None
         out = None
-        timers = get_timers(True)
+        timers = get_timers()
         if timers:
             timers("TERingAttnCoreLoopFwd", log_level=2).start()
         for i in range(cp_size + 1):
@@ -2570,7 +2570,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, dout):
-        timers = get_timers(True)
+        timers = get_timers()
         if timers:
             timers("TEAttnBwd", log_level=2).start()
         # pylint: disable=missing-function-docstring
@@ -5455,7 +5455,7 @@ class FlashAttention(torch.nn.Module):
                 )
         else:
             
-            timers = get_timers(True)
+            timers = get_timers()
             if timers:
                 timers("TEFlashAttnFwd", log_level=2).start()
 
