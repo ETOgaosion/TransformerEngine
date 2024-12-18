@@ -2337,7 +2337,11 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
             if i > 0:
                 # wait until fwd restuls correction of last step is done
                 if i > 1:
+                    if timers:
+                        timers("RingAttnFwdWait", log_level=2).start()
                     flash_attn_streams[(i - 1) % 2].wait_event(fwd_results_correction_done)
+                    if timers:
+                        timers("RingAttnFwdWait").stop()
 
                 if use_fused_attention:
                     # [b, np, sq, 1] -> [b, np, sq]
@@ -2386,7 +2390,11 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                 if i < cp_size:
                     flash_attn_streams[(i - 1) % 2].record_event(fwd_results_correction_done)
 
+        if timers:
+            timers("RingAttnFwdWait", log_level=2).start()
         torch.cuda.current_stream().wait_stream(flash_attn_streams[1])
+        if timers:
+            timers("RingAttnFwdWait").stop()
         if timers:
             timers("TERingAttnCoreLoopFwd").stop()
 
