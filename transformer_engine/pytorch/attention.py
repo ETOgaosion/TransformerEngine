@@ -1903,6 +1903,8 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                     if timers:
                         timers("RingAttnFwdWait").stop()
 
+                    if timers:
+                        timers("TERingAttnCoreLoopInnerStartP2PFwd", log_level=2).start()
                     if i < (cp_size - 1):
                         p2p_comm_buffers[i + 1] = torch.empty_like(p2p_comm_buffers[i])
                         send_recv_reqs[i % 2] = flash_attn_p2p_communicate(
@@ -1914,6 +1916,8 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                             cp_group,
                             batch_p2p_comm,
                         )
+                    if timers:
+                        timers("TERingAttnCoreLoopInnerStartP2PFwd").stop()
 
                     if (
                         not fp8
