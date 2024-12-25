@@ -417,9 +417,12 @@ def _ensure_var_is_not_initialized(var, name):
     """Make sure the input variable is not None."""
     assert var is None, '{} is already initialized.'.format(name)\
 
-def _ensure_var_is_initialized(var, name):
+def _ensure_var_is_initialized(var, name, force_error=False):
     """Make sure the input variable is not None."""
-    assert var is not None, '{} is not initialized.'.format(name)
+    if force_error:
+        assert var is not None, '{} is not initialized.'.format(name)
+    else:
+        return var is not None
 
 def set_timers():
     """Initialize timers."""
@@ -429,5 +432,7 @@ def set_timers():
 
 def get_timers():
     """Return timers."""
-    _ensure_var_is_initialized(_GLOBAL_TIMERS, 'timers')
+    if _ensure_var_is_initialized(_GLOBAL_TIMERS, 'timers'):
+        print('[WARNING] TransformerEngine: Timers are not initialized. Please call set_timers() first.')
+        return None
     return _GLOBAL_TIMERS
