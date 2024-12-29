@@ -1888,12 +1888,8 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         softmax_lse_ = None
         out = None
         timers = get_timers()
-        if timers:
-            timers("TERingAttnCoreLoopFwd", log_level=2).start()
         for i in range(cp_size + 1):
             if i < cp_size:
-                if timers:
-                    timers("TERingAttnCoreLoopInnerCalcFwd", log_level=2).start()
                 with torch.cuda.stream(flash_attn_streams[i % 2]):
                     # wait until KV is received
                     if timers:
@@ -2339,8 +2335,6 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                                 rng_states[i] = fa_outputs[7]
                     if timers:
                         timers("TEFlashAttnFwd").stop()
-                if timers:
-                    timers("TERingAttnCoreLoopInnerCalcFwd").stop()
             if i > 0:
                 # wait until fwd restuls correction of last step is done
                 if i > 1:
@@ -2402,8 +2396,6 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         torch.cuda.current_stream().wait_stream(flash_attn_streams[1])
         if timers:
             timers("RingAttnFwdWait").stop()
-        if timers:
-            timers("TERingAttnCoreLoopFwd").stop()
 
         softmax_lse = softmax_lse.to(torch.float)
         for i in range(cp_size):
@@ -3877,6 +3869,9 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
         cp_stream,
     ):
         # pylint: disable=missing-function-docstring
+        timers = get_timers()
+        if timers:
+            timers("TEAttnFwd", log_level=2).start()
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
 
@@ -3980,6 +3975,8 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
             ]
 
         batch_size = q.shape[batch_dim]
+        if timers:
+            timers("TEFlashAttnFwd", log_level=2).start()
         if use_fused_attention:
             out, aux_ctx_tensors = fused_attn_fwd(
                 is_training,
@@ -4023,6 +4020,8 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
             # [b*cp*s, np//cp, hn] -> [b, cp*s, np//cp, hn]
             out = out.view(batch_size, -1, *out.shape[-2:])
 
+        if timers:
+            timers("TEFlashAttnFwd").stop()
         chunk_ids_for_a2a = get_seq_chunk_ids_for_reordering(cp_size, out.device, False)
         out = flash_attn_a2a_communicate(
             out, chunk_ids_for_a2a, seq_dim, cp_size, cp_group, cp_stream, False
@@ -4115,11 +4114,17 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
         ctx.use_fused_attention = use_fused_attention
         ctx.fp8 = fp8 and int(os.getenv("NVTE_FP8_DPA_BWD", "1"))
         ctx.fp8_meta = fp8_meta
+        
+        if timers:
+            timers("TEAttnFwd").stop()
         return out_ret
 
     @staticmethod
     def backward(ctx, dout):
         # pylint: disable=missing-function-docstring
+        timers = get_timers()
+        if timers:
+            timers("TEAttnBwd", log_level=2).start()
         cp_size = get_distributed_world_size(ctx.cp_group)
 
         q, k, v, out = ctx.saved_tensors[:4]
@@ -4204,6 +4209,8 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
                 if _flash_attn_2_4_1_plus:
                     fa_backward_kwargs["deterministic"] = ctx.deterministic
 
+        if timers:
+            timers("TEFlashAttnBwd", log_level=2).start()
         if ctx.use_fused_attention:
             dq, dk, dv, _ = fused_attn_bwd(
                 ctx.max_seqlen_q,
@@ -4255,6 +4262,8 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
             )
             dq, dk, dv = [x.view(ctx.batch_size, -1, *x.shape[-2:]) for x in [dq, dk, dv]]
 
+        if timers:
+            timers("TEFlashAttnBwd").stop()
         chunk_ids_for_a2a = get_seq_chunk_ids_for_reordering(cp_size, q.device, False)
         dq, dk, dv = flash_attn_a2a_communicate(
             [dq, dk, dv], chunk_ids_for_a2a, seq_dim, cp_size, ctx.cp_group, ctx.cp_stream, False
@@ -4290,6 +4299,8 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
                     for x in [dq, dk, dv]
                 ]
 
+        if timers:
+            timers("TEAttnBwd").stop()
         return (
             None,
             dq,
@@ -5303,8 +5314,6 @@ class FlashAttention(torch.nn.Module):
     ) -> torch.Tensor:
         """flash-attn fprop"""
         timers = get_timers()
-        if timers:
-            timers("FlashAttentionClassFwd", log_level=2).start()
 
         assert all(
             x.dtype in [torch.float16, torch.bfloat16] or isinstance(x, Float8Tensor)
@@ -5460,8 +5469,6 @@ class FlashAttention(torch.nn.Module):
         else:
             
             timers = get_timers()
-            if timers:
-                timers("TEFlashAttnFwd", log_level=2).start()
 
             from .cpu_offload import CPUOffloadEnabled
 
@@ -5577,9 +5584,6 @@ class FlashAttention(torch.nn.Module):
                         causal="causal" in attn_mask_type,
                         **fa_optional_forward_kwargs,
                     )
-                
-                if timers:
-                    timers("TEFlashAttnFwd").stop()
 
         if qkv_format in ["sbhd", "bshd"] and "padding" in attn_mask_type:
             output = UnpackTensor.apply(indices_q, batch_size * max_seqlen_q, output)
@@ -5602,8 +5606,6 @@ class FlashAttention(torch.nn.Module):
             # thd -> t(hd)
             output = output.reshape(output.shape[0], -1)
         
-        if timers:
-            timers("FlashAttentionClassFwd").stop()
         return output.contiguous()
 
 
