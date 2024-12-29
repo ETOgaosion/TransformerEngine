@@ -432,7 +432,7 @@ def set_timers():
 
 def get_timers():
     """Return timers."""
-    if _ensure_var_is_initialized(_GLOBAL_TIMERS, 'timers'):
+    if not _ensure_var_is_initialized(_GLOBAL_TIMERS, 'timers'):
         print('[WARNING] TransformerEngine: Timers are not initialized. Please call set_timers() first.')
         return None
     return _GLOBAL_TIMERS
