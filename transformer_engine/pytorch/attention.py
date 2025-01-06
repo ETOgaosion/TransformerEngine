@@ -104,6 +104,7 @@ fa_logger.setLevel(_log_level)
 if not fa_logger.hasHandlers():
     fa_logger.addHandler(_stream_handler)
 
+_SYNC_P2P = bool(int(os.getenv("NVTE_SYNC_P2P", "0")))
 
 @functools.lru_cache(maxsize=None)
 def _get_supported_versions(version_min, version_max):
@@ -1438,39 +1439,48 @@ def flash_attn_p2p_communicate(
 ):
     """Point-to-point communications of KV and dKV in Attention with context parallelism"""
     send_recv_ops = []
+    send_recv_reqs = []
 
-    if batch_p2p_comm:
+    if _SYNC_P2P:
         if rank % 2 == 0:
-            send_op = torch.distributed.P2POp(
-                torch.distributed.isend, send_tensor, send_dst, cp_group
-            )
-            recv_op = torch.distributed.P2POp(
-                torch.distributed.irecv, recv_tensor, recv_src, cp_group
-            )
-            send_recv_ops.append(send_op)
-            send_recv_ops.append(recv_op)
+            torch.distributed.send(send_tensor, send_dst, cp_group)
+            torch.distributed.recv(recv_tensor, recv_src, cp_group)
         else:
-            recv_op = torch.distributed.P2POp(
-                torch.distributed.irecv, recv_tensor, recv_src, cp_group
-            )
-            send_op = torch.distributed.P2POp(
-                torch.distributed.isend, send_tensor, send_dst, cp_group
-            )
-            send_recv_ops.append(recv_op)
-            send_recv_ops.append(send_op)
-        send_recv_reqs = torch.distributed.batch_isend_irecv(send_recv_ops)
+            torch.distributed.recv(recv_tensor, recv_src, cp_group)
+            torch.distributed.send(send_tensor, send_dst, cp_group)
     else:
-        if rank % 2 == 0:
-            send_op = torch.distributed.isend(send_tensor, send_dst, cp_group)
-            recv_op = torch.distributed.irecv(recv_tensor, recv_src, cp_group)
-            send_recv_ops.append(send_op)
-            send_recv_ops.append(recv_op)
+        if batch_p2p_comm:
+            if rank % 2 == 0:
+                send_op = torch.distributed.P2POp(
+                    torch.distributed.isend, send_tensor, send_dst, cp_group
+                )
+                recv_op = torch.distributed.P2POp(
+                    torch.distributed.irecv, recv_tensor, recv_src, cp_group
+                )
+                send_recv_ops.append(send_op)
+                send_recv_ops.append(recv_op)
+            else:
+                recv_op = torch.distributed.P2POp(
+                    torch.distributed.irecv, recv_tensor, recv_src, cp_group
+                )
+                send_op = torch.distributed.P2POp(
+                    torch.distributed.isend, send_tensor, send_dst, cp_group
+                )
+                send_recv_ops.append(recv_op)
+                send_recv_ops.append(send_op)
+            send_recv_reqs = torch.distributed.batch_isend_irecv(send_recv_ops)
         else:
-            recv_op = torch.distributed.irecv(recv_tensor, recv_src, cp_group)
-            send_op = torch.distributed.isend(send_tensor, send_dst, cp_group)
-            send_recv_ops.append(recv_op)
-            send_recv_ops.append(send_op)
-        send_recv_reqs = send_recv_ops
+            if rank % 2 == 0:
+                send_op = torch.distributed.isend(send_tensor, send_dst, cp_group)
+                recv_op = torch.distributed.irecv(recv_tensor, recv_src, cp_group)
+                send_recv_ops.append(send_op)
+                send_recv_ops.append(recv_op)
+            else:
+                recv_op = torch.distributed.irecv(recv_tensor, recv_src, cp_group)
+                send_op = torch.distributed.isend(send_tensor, send_dst, cp_group)
+                send_recv_ops.append(recv_op)
+                send_recv_ops.append(send_op)
+            send_recv_reqs = send_recv_ops
 
     return send_recv_reqs
 
@@ -1892,12 +1902,13 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
             if i < cp_size:
                 with torch.cuda.stream(flash_attn_streams[i % 2]):
                     # wait until KV is received
-                    if timers:
-                        timers("RingAttnFwdWait", log_level=2).start()
-                    for req in send_recv_reqs[(i + 1) % 2]:
-                        req.wait()
-                    if timers:
-                        timers("RingAttnFwdWait").stop()
+                    if not _SYNC_P2P:
+                        if timers:
+                            timers("RingAttnFwdWait", log_level=2).start()
+                        for req in send_recv_reqs[(i + 1) % 2]:
+                            req.wait()
+                        if timers:
+                            timers("RingAttnFwdWait").stop()
 
                     if timers:
                         timers("TERingAttnCoreLoopInnerStartP2PFwd", log_level=2).start()
@@ -4328,7 +4339,7 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
             None,
         )
 
-
+@torch.compiler.disable(recursive=True)
 def attn_forward_func_with_cp(
     is_training,
     q,
