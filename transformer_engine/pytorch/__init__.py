@@ -73,6 +73,9 @@ from transformer_engine.pytorch.module import destroy_ub
 from transformer_engine.pytorch.attention import DotProductAttention
 from transformer_engine.pytorch.attention import InferenceParams
 from transformer_engine.pytorch.attention import MultiheadAttention
+from transformer_engine.pytorch.attention import flash_attn_p2p_communicate
+from transformer_engine.pytorch.attention import get_cu_seqlens_and_indices
+from transformer_engine.pytorch.attention import get_swa_mask, get_alibi, get_cu_seqlens, get_cu_seqlens_and_indices, get_indices, get_qkv_layout
 from transformer_engine.pytorch.transformer import TransformerLayer
 from transformer_engine.pytorch.permutation import moe_permute, moe_unpermute
 from transformer_engine.pytorch.fp8 import fp8_autocast
