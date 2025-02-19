@@ -1712,6 +1712,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         cp_group,
         cp_global_ranks,
         cp_stream,
+        group_seqlens=None,
     ):
         # pylint: disable=missing-function-docstring
         timers = get_timers()
@@ -1913,6 +1914,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                     if timers:
                         timers("TERingAttnCoreLoopInnerStartP2PFwd", log_level=2).start()
                     if i < (cp_size - 1):
+                        print(f'{rank} {i} buffer size: {p2p_comm_buffers[i].size()} q: {q.size()} k: {k.size()} v: {v.size()}')
                         p2p_comm_buffers[i + 1] = torch.empty_like(p2p_comm_buffers[i])
                         send_recv_reqs[i % 2] = flash_attn_p2p_communicate(
                             rank,
@@ -2570,6 +2572,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         ctx.use_fused_attention = use_fused_attention
         ctx.fp8 = fp8 and int(os.getenv("NVTE_FP8_DPA_BWD", "1"))
         ctx.fp8_meta = fp8_meta
+        ctx.group_seqlens = group_seqlens
         
         if timers:
             timers("TEAttnFwd").stop()
