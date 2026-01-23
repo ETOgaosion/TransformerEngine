@@ -224,6 +224,70 @@ When installing from GitHub, you can explicitly specify frameworks using the env
 
     NVTE_FRAMEWORK=pytorch,jax pip install --no-build-isolation git+https://github.com/NVIDIA/TransformerEngine.git@stable
 
+NVSHMEM Communication Mode Support
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+We introduce NVSHMEM into TransformerEngine-Enhanced to optimize the communication
+pattern for Context Parallelism. As a result, NVSHMEM-based communication is now supported.
+
+**Prerequisites for NVSHMEM support**
+
+Before enabling NVSHMEM communication, make sure the following requirements are met.
+
+**Install NVSHMEM**
+
+The validated and tested NVSHMEM version is **3.5.19**.
+
+*Option 1: Install via Debian packages*
+
+* Visit the `NVIDIA NVSHMEM Download Page <https://developer.nvidia.com/nvshmem-downloads?target_os=Linux>`.
+
+*Option 2: Build from source*
+
+* Refer to the`NVSHMEM Installation Guide <https://docs.nvidia.com/nvshmem/release-notes-install-guide/install-guide/nvshmem-install-proc.html#using-the-nvshmem-cmake-build-system>`_.
+
+**Set Required Environment Variables**
+
+The following environment variables must be set:
+
+* ``NVSHMEM_HOME``:Path to the root directory of the installed NVSHMEM library.
+* ``NVTE_ENABLE_NVSHMEM=1``:Enables NVSHMEM support in TransformerEngine during build.
+
+The TransformerEngine build system expects the following directory structure
+under ``NVSHMEM_HOME``:
+
+* ``include/``：Path to the root directory of the installed NVSHMEM library.
+* ``lib/``：Contains compiled NVSHMEM libraries 
+
+When NVSHMEM is installed via Debian packages, ``NVSHMEM_HOME`` is typically
+not defined and files are scattered under ``/usr/``. In this case, you must
+manually create a directory, then create ``include/`` and ``lib/`` subdirectories
+with symbolic links pointing to the actual NVSHMEM headers and libraries.
+
+**Installing TransformerEngine with NVSHMEM Enabled**
+
+After completing the NVSHMEM installation and setting the environment variables,
+build TransformerEngine using the standard pip workflow:
+
+.. code-block:: bash
+
+    NVTE_ENABLE_NVSHMEM=1 \
+    NVSHMEM_HOME=${nvshmem_installed_dir} \
+    NVTE_FRAMEWORK=pytorch,jax \
+    pip install --no-build-isolation .
+
+**Rebuilding Only the PyTorch Module (Optional)**
+
+If TransformerEngine was already built before introducing this NVSHMEM feature,
+you can recompile only the PyTorch extension to save time:
+
+.. code-block:: bash
+
+    # Ensure you are in the TransformerEngine-Enhanced root directory
+    export NVTE_ENABLE_NVSHMEM=1
+    export NVSHMEM_HOME=${nvshmem_installed_dir}
+    cd transformer_engine/pytorch && python setup.py build_ext --inplace
+
 conda Installation
 ^^^^^^^^^^^^^^^^^^
 
