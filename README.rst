@@ -244,7 +244,7 @@ The validated and tested NVSHMEM version is **3.5.19**.
 
 *Option 2: Build from source*
 
-* Refer to the`NVSHMEM Installation Guide <https://docs.nvidia.com/nvshmem/release-notes-install-guide/install-guide/nvshmem-install-proc.html#using-the-nvshmem-cmake-build-system>`_.
+* Refer to the`NVSHMEM Installation Guide <https://docs.nvidia.com/nvshmem/release-notes-install-guide/install-guide/nvshmem-install-proc.html#using-the-nvshmem-cmake-build-system>`.
 
 **Set Required Environment Variables**
 
