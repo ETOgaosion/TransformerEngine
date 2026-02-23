@@ -718,10 +718,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                         if nvshmem_kv is not None:
                             # Use NVSHMEM get: compute owner of the (i+1)-th step KV block
                             owner_idx = (rank - (i + 1)) % cp_size
-                            # Map owner idx to global rank (accounting for a2a groups)
-                            owner_global = cp_global_ranks[owner_idx * cp_size_a2a + rank_a2a]
-                            # nvshmem_get: dst (local buffer), src (symmetric address), peer=owner_global
-                            tex.nvshmem_get_on_current_stream(p2p_comm_buffers[i + 1], nvshmem_kv, int(owner_global))
+                            tex.nvshmem_get_on_current_stream(p2p_comm_buffers[i + 1], nvshmem_kv, int(owner_idx))
                         else:
                             # fallback to P2P if NVSHMEM not available
                             send_recv_reqs[i % 2] = flash_attn_p2p_communicate(
@@ -1749,7 +1746,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
 
         nvshmem_kv = ctx.nvshmem_kv
         cp_global_ranks = ctx.cp_global_ranks
-        
+
         for i in range(cp_size):
             # wait until KV is received
             for req in send_recv_reqs:
@@ -1762,8 +1759,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                         if nvshmem_kv is not None:
                             # owner of the next KV block
                             owner_idx = (rank - (i + 1)) % cp_size
-                            owner_global = cp_global_ranks[owner_idx * cp_size_a2a + rank_a2a]
-                            tex.nvshmem_get_on_current_stream(recv_tensor[0], nvshmem_kv, int(owner_global))
+                            tex.nvshmem_get_on_current_stream(recv_tensor[0], nvshmem_kv, int(owner_idx))
                             send_recv_reqs = []
                         else:
                             send_recv_reqs = flash_attn_p2p_communicate(
@@ -1792,8 +1788,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                     recv_tensor = recv_tensor[1]
                 if nvshmem_kv is not None:
                     owner_idx = (rank - (i + 1)) % cp_size
-                    owner_global = cp_global_ranks[owner_idx * cp_size_a2a + rank_a2a]
-                    tex.nvshmem_get_on_current_stream(recv_tensor, nvshmem_kv, int(owner_global))
+                    tex.nvshmem_get_on_current_stream(recv_tensor, nvshmem_kv, int(owner_idx))
                     send_recv_reqs = []
                 else:
                     send_recv_reqs = flash_attn_p2p_communicate(
