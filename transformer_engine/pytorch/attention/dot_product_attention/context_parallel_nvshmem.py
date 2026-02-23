@@ -1516,6 +1516,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         ctx.is_input_fp8 = is_input_fp8
         ctx.is_output_fp8 = is_output_fp8
         ctx.use_flash_attn_3 = use_flash_attn_3
+        ctx.nvshmem_kv = nvshmem_kv
 
         ctx.enable_mla = enable_mla
         if enable_mla:
@@ -1746,6 +1747,9 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                 if fa_utils.v2_6_0_plus:
                     fa_backward_kwargs["softcap"] = 0.0
 
+        nvshmem_kv = ctx.nvshmem_kv
+        cp_global_ranks = ctx.cp_global_ranks
+        
         for i in range(cp_size):
             # wait until KV is received
             for req in send_recv_reqs:
