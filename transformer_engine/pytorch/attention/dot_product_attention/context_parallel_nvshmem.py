@@ -790,7 +790,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                             # Map owner idx to global rank (accounting for a2a groups)
                             owner_global = cp_global_ranks[owner_idx * cp_size_a2a + rank_a2a]
                             # nvshmem_get: dst (local buffer), src (symmetric address), peer=owner_global
-                            nvshmem_get_on_stream(p2p_comm_buffers[i + 1], nvshmem_kv, owner_global, stream=communicate_stream)
+                            nvshmem_get_on_stream(p2p_comm_buffers[i + 1], nvshmem_kv, owner_idx, stream=communicate_stream)
                         else:
                             # fallback to P2P if NVSHMEM not available
                             send_recv_reqs[i % 2] = flash_attn_p2p_communicate(
@@ -1585,6 +1585,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         ctx.is_input_fp8 = is_input_fp8
         ctx.is_output_fp8 = is_output_fp8
         ctx.use_flash_attn_3 = use_flash_attn_3
+        ctx.nvshmem_kv = nvshmem_kv
 
         ctx.enable_mla = enable_mla
         if enable_mla:
