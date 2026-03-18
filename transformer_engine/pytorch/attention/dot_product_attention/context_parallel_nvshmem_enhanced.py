@@ -868,24 +868,29 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         help_comm_buffer = nvshmem.tensor(list(q.shape), dtype=q.dtype)
 
         # NVSHMEM arrays for counting each rank's completed steps
-        count_array = nvshmem.array((cp_size, ), dtype=cp.int32)
+        count_array = nvshmem.array((cp_size, ), dtype="uint64")
         # total_count_array = nvshmem.array((1,), dtype=cp.int32) 
-        count_array[:] = cp.zeros(cp_size, dtype=cp.int32)
-        count_gather_array = nvshmem.array((cp_size * cp_size,), dtype=cp.int32)
-        signal_array = nvshmem.array((1,), dtype="bool")  
+        count_array[:] = cp.zeros(cp_size, dtype="uint64")
+        count_gather_array = nvshmem.array((cp_size * cp_size,), dtype="uint64")
+        count_gather_array_fix = [nvshmem.array((cp_size), dtype="uint64") for i in range(cp_size)]
+        signal_array = nvshmem.array((1,), dtype="uint64")  
+        signal_array[:] = 1
+        communication_sync_signal = nvshmem.array((1,), dtype="uint64") 
+        communication_sync_signal[0] = 0
         device = Device()
         communicate_stream = device.create_stream()
+        gather_info_stream = device.create_stream()
         
         out = None
         for i in range(cp_size + 1):
-            print("rank", rank)
-            print("count array:", count_array)
+            # print(f"Rank {rank} entering step {i}")
+            # print(f"Rank {rank} count array: {count_array[:]}")
+            
             if i < cp_size:
                 with torch.cuda.stream(flash_attn_streams[i % 2]):
                     # wait until KV is received
-                    # for req in send_recv_reqs[(i + 1) % 2]:
-                    #     req.wait()
                     nvshmem.quiet(communicate_stream) 
+                    
 
                     if i < (cp_size - 1):
                         # p2p_comm_buffers[i + 1] = nvshmem.tensor(list(p2p_comm_buffers[i].shape), dtype=p2p_comm_buffers[i].dtype)   
@@ -906,8 +911,8 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                     if enable_mla:
                         # If MLA, k and v are flattened, so split them after receiving.
                         k_part = kv_inputs[i % 2][:k_numel].view(*k_shape)
-                        v_part = kv_inputs[i % 2][k_numel:].view(*v_shape)
-                    if causal:
+                        v_part = kv_inputs[i % 2][k_numel:].view(*v_shape)    
+                    if causal:                            
                         if i == 0:
                             if pad_between_seqs:
                                 cu_seqlens_q_per_step[i] = get_cu_seqlens_on_cp_rank(
@@ -1051,14 +1056,14 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                                     if not use_flash_attn_3:
                                         rng_states[i] = fa_outputs[3]
 
-                                # Store flash-attn outputs in NVSHMEM heap for CP communication (causal & flash-attn)
-                                nvshmem_fa_out, out_for_slow, nvshmem_fa_softmax_lse, softmax_lse_for_slow = _store_fa_nvshmem(out_per_step[i], softmax_lse_per_step[i])
-                                count_array[i] = True  # Mark that this step has completed
-                                # total_count_array[0] = np.sum(count_array)
+                            # Store flash-attn outputs in NVSHMEM heap for CP communication (causal & flash-attn)
+                            nvshmem_fa_out, out_for_slow, nvshmem_fa_softmax_lse, softmax_lse_for_slow = _store_fa_nvshmem(out_per_step[i], softmax_lse_per_step[i])
+                            # count_array[i] = 1  # Mark that this step has completed
+                            # total_count_array[0] = np.sum(count_array)
 
                         elif i <= rank:
-                            if count_array[i] == True:
-                                continue  # This step has been computed
+                            # if count_array[i] == 1:
+                            #     continue  # This step has been computed
                             if pad_between_seqs:
                                 cu_seqlens_q_per_step[i] = get_cu_seqlens_on_cp_rank(
                                     cu_seqlens_q, cu_seqlens_q_padded, cp_size, rank, True, True
@@ -1222,7 +1227,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                                     if not use_flash_attn_3:
                                         rng_states[i] = fa_outputs[3]
 
-                            count_array[i] = True  # Mark that this step has completed
+                            # count_array[i] = 1  # Mark that this step has been completed
                             # total_count_array[0] = np.sum(count_array)
                         else:
                             if pad_between_seqs:
@@ -1268,10 +1273,13 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                                         -1, k.shape[2], 2, *k.shape[-2:]
                                     )
                             elif qkv_format == "thd":
+                                # nvshmem.quiet(communicate_stream)
+                                # torch.cuda.synchronize()
                                 # [t, np, hn] -> [t/2, np, hn]
                                 q_inputs[i % 2] = tex.thd_read_half_tensor(
                                     q, cu_seqlens_q_padded, 1
                                 )
+                                print("finished tex.thd_read_half_tensor for q")
                             if use_fused_attention:
                                 q_inputs[i % 2] = q_inputs[i % 2].contiguous()
                                 if attn_bias is not None:
@@ -1383,7 +1391,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                                     softmax_lse_per_step[i] = fa_outputs[1]
                                     if not use_flash_attn_3:
                                         rng_states[i] = fa_outputs[3]
-                            count_array[i] = True  # Mark that this step has completed
+                            # count_array[i] = 1  # Mark that this step has completed
                             # total_count_array[0] = np.sum(count_array)
                     else:
                         if pad_between_seqs:
@@ -1503,12 +1511,24 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                                 softmax_lse_per_step[i] = fa_outputs[1]
                                 if not use_flash_attn_3:
                                     rng_states[i] = fa_outputs[3]
-
+            
+            if i == 0:
+                count_array[i] = 1 
             if i > 0:
+                if i < 4 and count_array[i] == 1:
+                    communication_sync_signal_buffer, size, dtype = nvshmem.array_get_buffer(communication_sync_signal) 
+                    nvshmem.signal_wait(communication_sync_signal_buffer, 2, nvshmem.ComparisonType.CMP_EQ, communicate_stream)
+                    print(f"{rank} finished wait signal")
+                    print(communication_sync_signal[0])
+                    communication_sync_signal[0] = 0
+                    print("finished reset")
+                elif i < 4:
+                    count_array[i] = 1  # Mark that this step has been computed
                 # wait until fwd restuls correction of last step is done
                 if i > 1:
                     flash_attn_streams[(i - 1) % 2].wait_event(fwd_results_correction_done)
 
+                print("enter the correction stream")
                 with torch.cuda.stream(flash_attn_streams[(i - 1) % 2]):
                     if use_fused_attention:
                         # [b, np, sq, 1] -> [b, np, sq] or
@@ -1533,9 +1553,12 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                                     q.shape
                                 )
                     elif (i - 1) <= rank or not causal:
+                        # if rank == 0:
+                        #     print("rank 0 start the correction")
                         flash_attn_fwd_softmax_lse_correction(
                             softmax_lse, softmax_lse_per_step[i - 1]
                         )
+                        print("finished flash_attn_fwd_softmax_lse_correction")
                     else:
                         if qkv_format == "thd":
                             tex.thd_second_half_lse_correction(
@@ -1549,7 +1572,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                                 softmax_lse.view(*softmax_lse.shape[:-1], 2, -1),
                                 softmax_lse_per_step[i - 1],
                             )
-
+                print("end the correction stream")
                 if i < cp_size:
                     flash_attn_streams[(i - 1) % 2].record_event(fwd_results_correction_done)
         
@@ -1661,31 +1684,47 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
             # Send back the out to slow rank
             # Use NVSHMEM put: dst (symmetric address), src (local buffer),
             target_index = idx
+            signal_buffer, signal_size, signal_dtype = nvshmem.array_get_buffer(communication_sync_signal) 
             # nvshmem.put(count_array[target_index:target_index+1], signal_array, slow_rank, stream=communicate_stream)
             nvshmem.rma.put_offset(count_array, signal_array, target_index, slow_rank, stream=communicate_stream)
+            # nvshmem.rma.put_signal_offset(count_array, signal_array, target_index, communication_sync_signal, 1, nvshmem.SignalOp.SIGNAL_SET, slow_rank, stream=communicate_stream)
             # NVSHMEM put: dst (symmetric address), src (local buffer), peer=slow_rank, target_index=idx
-            nvshmem.rma.put_offset(nvshmem_fa_out, out_for_slow, target_index, slow_rank, stream=communicate_stream)
-            nvshmem.rma.put_offset(nvshmem_fa_softmax_lse, softmax_lse_for_slow, target_index, slow_rank, stream=communicate_stream)
-
-        # device = Device()
-        # stream = device.create_stream()
-        # print("count array:", count_array)
+            nvshmem.rma.put_signal_offset(nvshmem_fa_out, out_for_slow, target_index, signal_buffer, 1, nvshmem.SignalOp.SIGNAL_ADD, slow_rank, stream=communicate_stream)
+            # nvshmem.rma.put_offset(nvshmem_fa_out, out_for_slow, target_index, slow_rank, stream=communicate_stream)
+            # nvshmem.rma.put_offset(nvshmem_fa_softmax_lse, softmax_lse_for_slow, target_index, slow_rank, stream=communicate_stream)
+            nvshmem.rma.put_signal_offset(nvshmem_fa_softmax_lse, softmax_lse_for_slow, target_index, signal_buffer, 1, nvshmem.SignalOp.SIGNAL_ADD, slow_rank, stream=communicate_stream)
+        
+        nvshmem.quiet(communicate_stream)
+        communicate_stream.sync()
+        # if rank == 3:
+        #     print("rank3 helping loop")
         j = 0
         nvtx.range_push("helping slow ranks")
+        print(f"rank {rank} start helping slow ranks loop")
         while True:
-            
             print("iteration: ", j)
             # nvshmem.fcollect(count_gather_array, count_array, cp_size)
-            nvtx.range_push("nvshmem.fcollect")
-            nvshmem.fcollect(team=nvshmem.Teams.TEAM_WORLD, dst_array=count_gather_array, src_array=count_array, stream=communicate_stream)
+            nvtx.range_push("nvshmem.get_gather_count_array")
+            # Replace collective fcollect with per-peer nvshmem.get to gather
+            # each peer's count_array into count_gather_array slices.
+            # dst slice for peer p is count_gather_array[p*cp_size:(p+1)*cp_size]
+            for p in range(cp_size):
+                peer_global = cp_global_ranks[p * cp_size_a2a + rank_a2a]
+                # nvshmem.rma.get_offset(count_gather_array, count_array, p * cp_size, peer_global, stream=gather_info_stream)
+                nvshmem.get(count_gather_array_fix[p], count_array, peer_global, stream=gather_info_stream)
+            # Ensure remote puts/gets on the gather stream are complete before reading.
+            gather_info_stream.sync()
+            # nvshmem.quiet(gather_info_stream)
             nvtx.range_pop()
-            print("count_gather_array:", count_gather_array)
-            true_count_per_pe = cp.array([cp.sum(count_gather_array[i*cp_size:(i+1)*cp_size]) for i in range(cp_size)])
+
+            # true_count_per_pe = cp.array([cp.sum(count_gather_array[i*cp_size:(i+1)*cp_size]) for i in range(cp_size)])
+            print("count_gather_array_fix:", count_gather_array_fix)
+            true_count_per_pe = cp.array([cp.sum(count_gather_array_fix[i]) for i in range(cp_size)])
             min_true_pe = int(cp.argmin(true_count_per_pe))
             all_min_true_count = true_count_per_pe[min_true_pe]
-            # print("all_min_true_count", all_min_true_count)
-
+            print("true_count_per_pe:", true_count_per_pe, "min_true_pe:", min_true_pe, "all_min_true_count:", all_min_true_count)
             if all_min_true_count == cp_size:
+                nvshmem.barrier(nvshmem.Teams.TEAM_WORLD, stream=gather_info_stream)
                 break
             slow_rank = min_true_pe
             slow_count = count_gather_array[slow_rank*cp_size:(slow_rank+1)*cp_size]
@@ -1696,10 +1735,16 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
             # print("count array", count_array)
             help_slow_ranks(slow_rank, last_false_index)
             j += 1
+            if(j==20):
+                print("helping slow ranks is taking too long, breaking out of the loop to avoid infinite loop.")
+                break
         nvtx.range_pop()
-        
+        # if rank == 3:
+        #     print("rank3 end help loop")
+        # if rank == 3:
+        #     print("rank3 enter 2nd half correction loop")
         # q = q_local
-
+        # print("enter the 2 nd half correction loop")
         for i in range(cp_size):
             if i <= rank or not causal:
                 if qkv_format in ["bshd", "sbhd"]:
@@ -1751,6 +1796,8 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                         True,
                         softmax_lse_in_packed_format,
                     )
+        # if rank == 3:
+        #     print("finished the 2 nd half correction loop")
 
         kv = p2p_comm_buffers[-1]
         if qkv_format == "bshd":
@@ -1796,6 +1843,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
             q_f16 = q_f16.view(q.shape)
             q_save, kv_save, out_save = q_f16, kv, out_f16
 
+        print("saving tensors for backward")
         tensors_to_save, tensor_objects = prepare_for_saving(
             q_save,
             kv_save,
@@ -1857,6 +1905,14 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
             ctx.S_quantizer = S_quantizer.copy()
             ctx.S_quantizer.scale = S_quantizer.scale.clone()
         nvtx_range_pop("transformer_engine.AttnFuncWithCPAndKVP2P.forward")
+        print("forward done, returning the output")
+        nvshmem.quiet(communicate_stream)
+        nvshmem.quiet(gather_info_stream)
+        # nvshmem.barrier_all(communicate_stream)
+        # nvshmem.barrier_all(gather_info_stream)
+        # communicate_stream.sync()
+        # gather_info_stream.sync()
+        dist.barrier(group=cp_group)
         # free up some nvshmem buffers
         nvshmem.free_tensor(nvshmem_kv)
         nvshmem.free_tensor(help_comm_buffer)
@@ -1868,9 +1924,10 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         nvshmem.free_tensor(out_for_slow)
         nvshmem.free_tensor(softmax_lse_for_slow)
         nvshmem.free_tensor(nvshmem_q)
+        # print("freed nvshmem buffers used for communication and helping slow ranks")
         for i in  range(cp_size):
             nvshmem.free_tensor(p2p_comm_buffers[i])
-
+            nvshmem.free_array(count_gather_array_fix[i])
         return out_ret
 
     @staticmethod
